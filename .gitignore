@@ -1,0 +1,13 @@
+# Go
+backend/bin/
+backend/data/
+*.db
+*.db-shm
+*.db-wal
+*.exe
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+.env*.local
