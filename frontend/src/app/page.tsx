@@ -1,14 +1,18 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
+  Archive,
   Bell,
   CheckCircle2,
   Clock,
   Edit3,
+  ExternalLink,
   Globe,
+  KeyRound,
   Pause,
   Play,
   Plus,
@@ -19,6 +23,7 @@ import {
   Trash2,
   Wifi,
   WifiOff,
+  X,
   XCircle,
 } from "lucide-react";
 import { api, getWebSocketURL } from "@/lib/api";
@@ -33,6 +38,14 @@ import {
 import { LatencyChart } from "@/components/LatencyChart";
 import { MonitorModal } from "@/components/MonitorModal";
 import { WebhookModal } from "@/components/WebhookModal";
+import { AuthModal, BackupModal } from "@/components/BackupAuthModals";
+
+interface ToastItem {
+  id: string;
+  title: string;
+  message: string;
+  variant: "ok" | "err" | "warn";
+}
 
 function statusColor(status: MonitorStatus) {
   switch (status) {
@@ -87,18 +100,34 @@ export default function DashboardPage() {
   const [monitorModalOpen, setMonitorModalOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<Monitor | null>(null);
   const [webhookModalOpen, setWebhookModalOpen] = useState(false);
+  const [backupModalOpen, setBackupModalOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const pushToast = useCallback(
+    (title: string, message: string, variant: "ok" | "err" | "warn" = "warn") => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setToasts((prev) => [...prev.slice(-3), { id, title, message, variant }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 6000);
+    },
+    []
+  );
 
   const loadInitial = useCallback(async () => {
     try {
-      const [mList, wList, incList] = await Promise.all([
+      const [authRes, mList, incList] = await Promise.all([
+        api.authStatus().catch(() => ({ auth_required: false })),
         api.listMonitors(),
-        api.listWebhooks(),
         api.listIncidents(undefined, 30),
       ]);
+      setAuthRequired(authRes.auth_required);
       setMonitors(mList);
-      setWebhooks(wList);
       setIncidents(incList);
       setSelectedId((prev) => prev || (mList[0]?.id ?? null));
+      api.listWebhooks().then(setWebhooks).catch(() => {});
       setApiError(null);
     } catch (err) {
       setApiError(
@@ -190,10 +219,21 @@ export default function DashboardPage() {
               const { id } = msg.data as { id: string };
               setMonitors((prev) => prev.filter((m) => m.id !== id));
               setSelectedId((curr) => (curr === id ? null : curr));
-            } else if (
-              msg.event === "incident_opened" ||
-              msg.event === "incident_resolved"
-            ) {
+            } else if (msg.event === "incident_opened") {
+              const inc = msg.data as Incident;
+              pushToast(
+                `${inc.monitor_name} is DOWN`,
+                inc.cause || "Health check failed",
+                "err"
+              );
+              api.listIncidents(undefined, 30).then(setIncidents).catch(() => {});
+            } else if (msg.event === "incident_resolved") {
+              const inc = msg.data as Incident;
+              pushToast(
+                `${inc.monitor_name} Recovered`,
+                `Downtime duration: ${formatDuration(inc.duration_seconds)}`,
+                "ok"
+              );
               api.listIncidents(undefined, 30).then(setIncidents).catch(() => {});
             }
           } catch {
@@ -318,6 +358,33 @@ export default function DashboardPage() {
                 {wsConnected ? "Live WS" : "Reconnecting"}
               </span>
             </span>
+
+            <Link
+              href="/status"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
+            >
+              <ExternalLink className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="hidden md:inline">Status Page</span>
+            </Link>
+
+            <button
+              onClick={() => setBackupModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
+              title="Backup & Restore JSON"
+            >
+              <Archive className="h-4 w-4 text-sky-400" />
+              <span className="hidden md:inline">Backup</span>
+            </button>
+
+            {authRequired && (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800 sm:text-sm"
+                title="API Auth Token"
+              >
+                <KeyRound className="h-4 w-4 text-amber-400" />
+              </button>
+            )}
 
             <button
               onClick={() => setWebhookModalOpen(true)}
@@ -485,6 +552,11 @@ export default function DashboardPage() {
                               <span className="font-semibold text-slate-100">
                                 {m.name}
                               </span>
+                              {m.maintenance && (
+                                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                                  MAINT
+                                </span>
+                              )}
                               {!m.enabled && (
                                 <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400">
                                   PAUSED
@@ -798,6 +870,49 @@ export default function DashboardPage() {
           setWebhooks(w);
         }}
       />
+
+      <BackupModal
+        open={backupModalOpen}
+        onClose={() => setBackupModalOpen(false)}
+        onImported={loadInitial}
+      />
+
+      <AuthModal
+        open={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onSaved={loadInitial}
+      />
+
+      {/* Real-time Toast Notifications */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className={`flex items-start justify-between gap-2 rounded-xl border p-3.5 text-xs shadow-2xl backdrop-blur-md ${
+                t.variant === "ok"
+                  ? "border-emerald-500/40 bg-slate-900/95 text-emerald-200"
+                  : t.variant === "err"
+                    ? "border-rose-500/40 bg-slate-900/95 text-rose-200"
+                    : "border-amber-500/40 bg-slate-900/95 text-amber-200"
+              }`}
+            >
+              <div>
+                <div className="font-semibold">{t.title}</div>
+                <div className="mt-0.5 text-slate-300">{t.message}</div>
+              </div>
+              <button
+                onClick={() =>
+                  setToasts((prev) => prev.filter((item) => item.id !== t.id))
+                }
+                className="rounded p-0.5 text-slate-400 hover:text-slate-100"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

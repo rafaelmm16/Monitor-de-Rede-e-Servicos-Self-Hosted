@@ -26,6 +26,8 @@ export function MonitorModal({
   const [expectedStatus, setExpectedStatus] = useState(200);
   const [keyword, setKeyword] = useState("");
   const [sslWarnDays, setSslWarnDays] = useState(14);
+  const [maxRetries, setMaxRetries] = useState(1);
+  const [maintenance, setMaintenance] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -41,6 +43,8 @@ export function MonitorModal({
       setExpectedStatus(initial.expected_status ?? 200);
       setKeyword(initial.keyword || "");
       setSslWarnDays(initial.ssl_expiry_warn_days || 14);
+      setMaxRetries(initial.max_retries || 1);
+      setMaintenance(Boolean(initial.maintenance));
       setEnabled(initial.enabled);
     } else {
       setName("");
@@ -52,6 +56,8 @@ export function MonitorModal({
       setExpectedStatus(200);
       setKeyword("");
       setSslWarnDays(14);
+      setMaxRetries(1);
+      setMaintenance(false);
       setEnabled(true);
     }
     setError("");
@@ -75,6 +81,8 @@ export function MonitorModal({
           expected_status: Number(expectedStatus) || 0,
           keyword: keyword.trim(),
           ssl_expiry_warn_days: Number(sslWarnDays) || 14,
+          max_retries: Number(maxRetries) || 1,
+          maintenance,
           enabled,
         },
         initial?.id
@@ -182,10 +190,10 @@ export function MonitorModal({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">
-                Interval (seconds)
+                Interval (s)
               </label>
               <input
                 type="number"
@@ -198,7 +206,7 @@ export function MonitorModal({
 
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">
-                Timeout (seconds)
+                Timeout (s)
               </label>
               <input
                 type="number"
@@ -206,6 +214,20 @@ export function MonitorModal({
                 max={60}
                 value={timeoutSeconds}
                 onChange={(e) => setTimeoutSeconds(Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-400">
+                Retries (DOWN)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxRetries}
+                onChange={(e) => setMaxRetries(Number(e.target.value))}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
               />
             </div>
@@ -258,15 +280,27 @@ export function MonitorModal({
             </div>
           )}
 
-          <label className="flex items-center gap-2 text-sm text-slate-300">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-700 bg-slate-950 accent-emerald-500"
-            />
-            Enable monitor immediately
-          </label>
+          <div className="flex flex-wrap gap-5">
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 accent-emerald-500"
+              />
+              Enable monitor immediately
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-amber-300">
+              <input
+                type="checkbox"
+                checked={maintenance}
+                onChange={(e) => setMaintenance(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 accent-amber-500"
+              />
+              Maintenance mode (silence alerts)
+            </label>
+          </div>
 
           <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
             <button

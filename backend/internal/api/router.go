@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +33,9 @@ func NewServer(store *storage.Store, sched *scheduler.Scheduler, hub *ws.Hub) ht
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
+	mux.HandleFunc("GET /api/status", s.handlePublicStatus)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/ws", s.hub.HandleWS)
 
 	mux.HandleFunc("GET /api/monitors", s.handleListMonitors)
@@ -49,16 +54,51 @@ func NewServer(store *storage.Store, sched *scheduler.Scheduler, hub *ws.Hub) ht
 	mux.HandleFunc("DELETE /api/webhooks/{id}", s.handleDeleteWebhook)
 	mux.HandleFunc("POST /api/webhooks/{id}/test", s.handleTestWebhook)
 
-	return withCORS(mux)
+	mux.HandleFunc("GET /api/config/export", s.handleExportConfig)
+	mux.HandleFunc("POST /api/config/import", s.handleImportConfig)
+
+	return withCORS(withOptionalAuth(mux))
 }
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func withOptionalAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := os.Getenv("NETPULSE_AUTH_TOKEN")
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Public read-only endpoints
+		if r.Method == http.MethodGet &&
+			(r.URL.Path == "/api/health" ||
+				r.URL.Path == "/api/auth/status" ||
+				r.URL.Path == "/api/status" ||
+				r.URL.Path == "/metrics" ||
+				r.URL.Path == "/api/ws") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check Bearer token or X-API-Key
+		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if provided == "" || provided == r.Header.Get("Authorization") {
+			provided = r.Header.Get("X-API-Key")
+		}
+		if provided != token {
+			writeError(w, http.StatusUnauthorized, "unauthorized: valid NETPULSE_AUTH_TOKEN required")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -69,6 +109,145 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "ok",
 		"time":   time.Now().UTC(),
+	})
+}
+
+func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auth_required": os.Getenv("NETPULSE_AUTH_TOKEN") != "",
+	})
+}
+
+func (s *Server) handlePublicStatus(w http.ResponseWriter, r *http.Request) {
+	monitors, err := s.store.ListMonitors()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	incidents, err := s.store.ListIncidents("", 15)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"generated_at": time.Now().UTC(),
+		"monitors":     monitors,
+		"incidents":    incidents,
+	})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	monitors, err := s.store.ListMonitors()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	var b strings.Builder
+	b.WriteString("# HELP netpulse_monitor_up Monitor health status (1=up, 0.5=degraded, 0=down)\n")
+	b.WriteString("# TYPE netpulse_monitor_up gauge\n")
+	for _, m := range monitors {
+		val := 0.0
+		switch m.Status {
+		case models.StatusUp:
+			val = 1.0
+		case models.StatusDegraded:
+			val = 0.5
+		}
+		fmt.Fprintf(&b, "netpulse_monitor_up{id=%q,name=%q,type=%q,target=%q} %g\n",
+			m.ID, m.Name, m.Type, m.Target, val)
+	}
+
+	b.WriteString("# HELP netpulse_monitor_latency_ms Last recorded latency in milliseconds\n")
+	b.WriteString("# TYPE netpulse_monitor_latency_ms gauge\n")
+	for _, m := range monitors {
+		fmt.Fprintf(&b, "netpulse_monitor_latency_ms{id=%q,name=%q,type=%q,target=%q} %d\n",
+			m.ID, m.Name, m.Type, m.Target, m.LastLatencyMs)
+	}
+
+	b.WriteString("# HELP netpulse_monitor_uptime_24h_percent 24-hour uptime percentage\n")
+	b.WriteString("# TYPE netpulse_monitor_uptime_24h_percent gauge\n")
+	for _, m := range monitors {
+		fmt.Fprintf(&b, "netpulse_monitor_uptime_24h_percent{id=%q,name=%q,type=%q,target=%q} %.2f\n",
+			m.ID, m.Name, m.Type, m.Target, m.Uptime24h)
+	}
+
+	b.WriteString("# HELP netpulse_monitor_ssl_days_remaining Days remaining until SSL certificate expiration\n")
+	b.WriteString("# TYPE netpulse_monitor_ssl_days_remaining gauge\n")
+	for _, m := range monitors {
+		if m.SSLDaysRemaining != nil {
+			fmt.Fprintf(&b, "netpulse_monitor_ssl_days_remaining{id=%q,name=%q,target=%q} %d\n",
+				m.ID, m.Name, m.Target, *m.SSLDaysRemaining)
+		}
+	}
+
+	_, _ = w.Write([]byte(b.String()))
+}
+
+type configBackup struct {
+	Version    string           `json:"version"`
+	ExportedAt time.Time        `json:"exported_at"`
+	Monitors   []models.Monitor `json:"monitors"`
+	Webhooks   []models.Webhook `json:"webhooks"`
+}
+
+func (s *Server) handleExportConfig(w http.ResponseWriter, r *http.Request) {
+	monitors, err := s.store.ListMonitors()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webhooks, err := s.store.ListWebhooks()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, configBackup{
+		Version:    "1.0",
+		ExportedAt: time.Now().UTC(),
+		Monitors:   monitors,
+		Webhooks:   webhooks,
+	})
+}
+
+func (s *Server) handleImportConfig(w http.ResponseWriter, r *http.Request) {
+	var payload configBackup
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON backup payload")
+		return
+	}
+
+	importedMonitors := 0
+	for i := range payload.Monitors {
+		m := payload.Monitors[i]
+		if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Target) == "" {
+			continue
+		}
+		m.ID = ""
+		m.Status = models.StatusUnknown
+		if err := s.store.CreateMonitor(&m); err == nil {
+			s.scheduler.UpsertMonitor(m)
+			s.hub.Broadcast("monitor_created", m)
+			importedMonitors++
+		}
+	}
+
+	importedWebhooks := 0
+	for i := range payload.Webhooks {
+		wh := payload.Webhooks[i]
+		if strings.TrimSpace(wh.Name) == "" {
+			continue
+		}
+		wh.ID = ""
+		if err := s.store.CreateWebhook(&wh); err == nil {
+			importedWebhooks++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{
+		"imported_monitors": importedMonitors,
+		"imported_webhooks": importedWebhooks,
 	})
 }
 

@@ -51,6 +51,8 @@ func (s *Store) migrate() error {
 		expected_status INTEGER NOT NULL DEFAULT 200,
 		keyword TEXT NOT NULL DEFAULT '',
 		ssl_expiry_warn_days INTEGER NOT NULL DEFAULT 14,
+		max_retries INTEGER NOT NULL DEFAULT 1,
+		maintenance INTEGER NOT NULL DEFAULT 0,
 		enabled INTEGER NOT NULL DEFAULT 1,
 		status TEXT NOT NULL DEFAULT 'unknown',
 		last_latency_ms INTEGER NOT NULL DEFAULT 0,
@@ -100,7 +102,13 @@ func (s *Store) migrate() error {
 	);
 	`
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Idempotent column migrations for existing databases
+	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 1`)
+	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`)
+	return nil
 }
 
 func (s *Store) CreateMonitor(m *models.Monitor) error {
@@ -122,16 +130,19 @@ func (s *Store) CreateMonitor(m *models.Monitor) error {
 	if m.SSLExpiryWarnDays <= 0 {
 		m.SSLExpiryWarnDays = 14
 	}
+	if m.MaxRetries < 1 {
+		m.MaxRetries = 1
+	}
 
 	_, err := s.db.Exec(`
 		INSERT INTO monitors (
 			id, name, type, target, port, interval_seconds, timeout_seconds,
-			expected_status, keyword, ssl_expiry_warn_days, enabled, status,
-			last_latency_ms, last_error, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
+			enabled, status, last_latency_ms, last_error, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Name, m.Type, m.Target, m.Port, m.IntervalSeconds, m.TimeoutSeconds,
-		m.ExpectedStatus, m.Keyword, m.SSLExpiryWarnDays, boolToInt(m.Enabled), m.Status,
-		m.LastLatencyMs, m.LastError, m.CreatedAt, m.UpdatedAt,
+		m.ExpectedStatus, m.Keyword, m.SSLExpiryWarnDays, m.MaxRetries, boolToInt(m.Maintenance),
+		boolToInt(m.Enabled), m.Status, m.LastLatencyMs, m.LastError, m.CreatedAt, m.UpdatedAt,
 	)
 	return err
 }
@@ -147,16 +158,21 @@ func (s *Store) UpdateMonitor(m *models.Monitor) error {
 	if m.SSLExpiryWarnDays <= 0 {
 		m.SSLExpiryWarnDays = 14
 	}
+	if m.MaxRetries < 1 {
+		m.MaxRetries = 1
+	}
 
 	res, err := s.db.Exec(`
 		UPDATE monitors SET
 			name = ?, type = ?, target = ?, port = ?, interval_seconds = ?,
 			timeout_seconds = ?, expected_status = ?, keyword = ?,
-			ssl_expiry_warn_days = ?, enabled = ?, updated_at = ?
+			ssl_expiry_warn_days = ?, max_retries = ?, maintenance = ?,
+			enabled = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Name, m.Type, m.Target, m.Port, m.IntervalSeconds,
 		m.TimeoutSeconds, m.ExpectedStatus, m.Keyword,
-		m.SSLExpiryWarnDays, boolToInt(m.Enabled), m.UpdatedAt, m.ID,
+		m.SSLExpiryWarnDays, m.MaxRetries, boolToInt(m.Maintenance),
+		boolToInt(m.Enabled), m.UpdatedAt, m.ID,
 	)
 	if err != nil {
 		return err
@@ -183,9 +199,9 @@ func (s *Store) DeleteMonitor(id string) error {
 func (s *Store) GetMonitor(id string) (*models.Monitor, error) {
 	row := s.db.QueryRow(`
 		SELECT id, name, type, target, port, interval_seconds, timeout_seconds,
-		       expected_status, keyword, ssl_expiry_warn_days, enabled, status,
-		       last_latency_ms, last_checked_at, last_error, ssl_expires_at,
-		       ssl_days_remaining, created_at, updated_at
+		       expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
+		       enabled, status, last_latency_ms, last_checked_at, last_error,
+		       ssl_expires_at, ssl_days_remaining, created_at, updated_at
 		FROM monitors WHERE id = ?`, id)
 
 	m, err := scanMonitor(row)
@@ -199,9 +215,9 @@ func (s *Store) GetMonitor(id string) (*models.Monitor, error) {
 func (s *Store) ListMonitors() ([]models.Monitor, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, type, target, port, interval_seconds, timeout_seconds,
-		       expected_status, keyword, ssl_expiry_warn_days, enabled, status,
-		       last_latency_ms, last_checked_at, last_error, ssl_expires_at,
-		       ssl_days_remaining, created_at, updated_at
+		       expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
+		       enabled, status, last_latency_ms, last_checked_at, last_error,
+		       ssl_expires_at, ssl_days_remaining, created_at, updated_at
 		FROM monitors ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -519,21 +535,22 @@ type scanner interface {
 
 func scanMonitor(row scanner) (*models.Monitor, error) {
 	var m models.Monitor
-	var enabled int
+	var enabled, maintenance int
 	var lastChecked, sslExpires sql.NullTime
 	var sslDays sql.NullInt64
 
 	err := row.Scan(
 		&m.ID, &m.Name, &m.Type, &m.Target, &m.Port,
 		&m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus,
-		&m.Keyword, &m.SSLExpiryWarnDays, &enabled, &m.Status,
-		&m.LastLatencyMs, &lastChecked, &m.LastError,
+		&m.Keyword, &m.SSLExpiryWarnDays, &m.MaxRetries, &maintenance,
+		&enabled, &m.Status, &m.LastLatencyMs, &lastChecked, &m.LastError,
 		&sslExpires, &sslDays, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
 	m.Enabled = enabled == 1
+	m.Maintenance = maintenance == 1
 	if lastChecked.Valid {
 		t := lastChecked.Time
 		m.LastCheckedAt = &t

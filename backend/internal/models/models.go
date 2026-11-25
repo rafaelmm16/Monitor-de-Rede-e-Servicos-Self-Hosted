@@ -31,6 +31,8 @@ type Monitor struct {
 	ExpectedStatus    int           `json:"expected_status"`
 	Keyword           string        `json:"keyword,omitempty"`
 	SSLExpiryWarnDays int           `json:"ssl_expiry_warn_days"`
+	MaxRetries        int           `json:"max_retries"`
+	Maintenance       bool          `json:"maintenance"`
 	Enabled           bool          `json:"enabled"`
 	Status            MonitorStatus `json:"status"`
 	LastLatencyMs     int64         `json:"last_latency_ms"`

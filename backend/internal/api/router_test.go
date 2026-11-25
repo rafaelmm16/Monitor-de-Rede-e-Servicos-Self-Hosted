@@ -71,3 +71,70 @@ func TestMonitorEndpoints(t *testing.T) {
 		t.Fatalf("expected 204 on DELETE /api/monitors, got %d", rec.Code)
 	}
 }
+
+func TestMetricsStatusBackupAndAuth(t *testing.T) {
+	store, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	defer store.Close()
+
+	hub := ws.NewHub()
+	sched := scheduler.New(store, hub)
+	handler := api.NewServer(store, sched, hub)
+
+	t.Setenv("NETPULSE_AUTH_TOKEN", "secret-token")
+
+	// Public endpoints work without token
+	for _, path := range []string{"/api/health", "/api/auth/status", "/api/status", "/metrics"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 on public %s, got %d", path, rec.Code)
+		}
+	}
+
+	// Mutating endpoint rejected without token
+	body, _ := json.Marshal(models.Monitor{
+		Name:       "Backup Test",
+		Type:       models.MonitorTCP,
+		Target:     "127.0.0.1",
+		Port:       80,
+		MaxRetries: 3,
+		Enabled:    false,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/monitors", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without token, got %d", rec.Code)
+	}
+
+	// Mutating endpoint succeeds with Bearer token
+	req = httptest.NewRequest(http.MethodPost, "/api/monitors", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 with token, got %d", rec.Code)
+	}
+
+	// Export config
+	req = httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
+	req.Header.Set("X-API-Key", "secret-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on export, got %d", rec.Code)
+	}
+
+	// Import config
+	req = httptest.NewRequest(http.MethodPost, "/api/config/import", bytes.NewReader(rec.Body.Bytes()))
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on import, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

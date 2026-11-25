@@ -64,9 +64,11 @@ npm run dev
 | Método | Rota | Descrição |
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Status do daemon |
+| `GET` | `/api/status` | Dados para a Status Page pública (`/status`) |
+| `GET` | `/metrics` | Métricas no formato Prometheus / OpenMetrics |
 | `GET` | `/api/ws` | Stream WebSocket em tempo real |
 | `GET` | `/api/monitors` | Lista monitores e estatísticas 24h |
-| `POST` | `/api/monitors` | Cria um novo monitor |
+| `POST` | `/api/monitors` | Cria um novo monitor (suporta `max_retries` e `maintenance`) |
 | `PUT` | `/api/monitors/{id}` | Atualiza um monitor |
 | `DELETE` | `/api/monitors/{id}` | Remove um monitor |
 | `POST` | `/api/monitors/{id}/check` | Executa check imediato |
@@ -74,3 +76,6 @@ npm run dev
 | `GET` | `/api/incidents` | Histórico de quedas/incidentes |
 | `GET` / `POST` | `/api/webhooks` | Lista ou cria canais de alerta |
 | `POST` | `/api/webhooks/{id}/test` | Envia alerta de teste |
+| `GET` / `POST` | `/api/config/export` / `import` | Backup e restauração em JSON |
+
+> **Autenticação opcional:** Defina `NETPULSE_AUTH_TOKEN` no ambiente do backend para proteger rotas de escrita, webhooks e backup com `Authorization: Bearer <token>`.

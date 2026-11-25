@@ -25,6 +25,8 @@ export interface Monitor {
   expected_status: number;
   keyword?: string;
   ssl_expiry_warn_days: number;
+  max_retries: number;
+  maintenance: boolean;
   enabled: boolean;
   status: MonitorStatus;
   last_latency_ms: number;
@@ -63,4 +65,17 @@ export interface Webhook {
 export interface WSMessage<T = unknown> {
   event: string;
   data: T;
+}
+
+export interface ConfigBackup {
+  version: string;
+  exported_at: string;
+  monitors: Monitor[];
+  webhooks: Webhook[];
+}
+
+export interface PublicStatusResponse {
+  generated_at: string;
+  monitors: Monitor[];
+  incidents: Incident[];
 }

@@ -18,16 +18,18 @@ type Scheduler struct {
 	store *storage.Store
 	hub   *ws.Hub
 
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
-	rootCtx context.Context
+	mu         sync.Mutex
+	cancels    map[string]context.CancelFunc
+	failStreak map[string]int
+	rootCtx    context.Context
 }
 
 func New(store *storage.Store, hub *ws.Hub) *Scheduler {
 	return &Scheduler{
-		store:   store,
-		hub:     hub,
-		cancels: make(map[string]context.CancelFunc),
+		store:      store,
+		hub:        hub,
+		cancels:    make(map[string]context.CancelFunc),
+		failStreak: make(map[string]int),
 	}
 }
 
@@ -124,6 +126,28 @@ func (s *Scheduler) executeAndProcess(m models.Monitor) {
 	oldStatus := m.Status
 	res := checker.Run(ctx, m)
 
+	// Apply max_retries confirmation before flipping monitor to DOWN
+	maxRetries := m.MaxRetries
+	if maxRetries < 1 {
+		maxRetries = 1
+	}
+
+	s.mu.Lock()
+	if res.Status == models.StatusDown {
+		s.failStreak[m.ID]++
+		if s.failStreak[m.ID] < maxRetries && oldStatus != models.StatusDown {
+			// Not yet confirmed down: keep previous operational status on monitor
+			if oldStatus == models.StatusUnknown {
+				res.Status = models.StatusUp
+			} else {
+				res.Status = oldStatus
+			}
+		}
+	} else {
+		s.failStreak[m.ID] = 0
+	}
+	s.mu.Unlock()
+
 	if err := s.store.RecordCheck(&res); err != nil {
 		log.Printf("failed to record check for %s: %v", m.ID, err)
 		return
@@ -147,8 +171,8 @@ func (s *Scheduler) executeAndProcess(m models.Monitor) {
 			}
 		}
 
-		// Notify webhooks on meaningful transitions (skip initial unknown -> up)
-		if !(oldStatus == models.StatusUnknown && res.Status == models.StatusUp) {
+		// Notify webhooks on meaningful transitions unless in maintenance mode
+		if !m.Maintenance && !(oldStatus == models.StatusUnknown && res.Status == models.StatusUp) {
 			s.dispatchAlerts(m, oldStatus, res)
 		}
 	}
