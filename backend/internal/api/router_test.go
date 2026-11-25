@@ -137,4 +137,16 @@ func TestMetricsStatusBackupAndAuth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 on import, got %d: %s", rec.Code, rec.Body.String())
 	}
+
+	// Badge SVG endpoint (public)
+	monitors, _ := store.ListMonitors()
+	if len(monitors) == 0 {
+		t.Fatalf("expected at least 1 monitor for badge test")
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/badge/"+monitors[0].ID, nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/svg+xml" {
+		t.Fatalf("expected 200 image/svg+xml on badge, got %d (%s)", rec.Code, rec.Header().Get("Content-Type"))
+	}
 }

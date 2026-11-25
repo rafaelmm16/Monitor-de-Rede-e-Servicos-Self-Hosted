@@ -3,6 +3,7 @@ package checker
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -59,13 +60,29 @@ func checkHTTP(ctx context.Context, m models.Monitor, timeout time.Duration, res
 		target = "https://" + target
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	method := strings.ToUpper(strings.TrimSpace(m.HTTPMethod))
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		res.Status = models.StatusDown
 		res.Error = fmt.Sprintf("invalid URL: %v", err)
 		return
 	}
 	req.Header.Set("User-Agent", "NetPulse-Monitor/1.0")
+
+	if strings.TrimSpace(m.HTTPHeaders) != "" {
+		var customHeaders map[string]string
+		if err := json.Unmarshal([]byte(m.HTTPHeaders), &customHeaders); err == nil {
+			for k, v := range customHeaders {
+				if strings.TrimSpace(k) != "" {
+					req.Header.Set(k, v)
+				}
+			}
+		}
+	}
 
 	client := &http.Client{
 		Timeout: timeout,

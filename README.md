@@ -23,6 +23,12 @@ Um monitor de infraestrutura e serviços self-hosted (estilo Uptime Kuma simplif
 docker compose up --build -d
 ```
 
+Para subir também **Prometheus** (`:9090`) e **Grafana** (`:3001`) pré-configurados:
+
+```bash
+docker compose --profile observability up --build -d
+```
+
 - **Dashboard**: `http://localhost:3000`
 - **API / WebSocket**: `http://localhost:8080`
 
@@ -65,6 +71,7 @@ npm run dev
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Status do daemon |
 | `GET` | `/api/status` | Dados para a Status Page pública (`/status`) |
+| `GET` | `/api/badge/{id}` | Badge SVG dinâmico para embutir em READMEs/docs |
 | `GET` | `/metrics` | Métricas no formato Prometheus / OpenMetrics |
 | `GET` | `/api/ws` | Stream WebSocket em tempo real |
 | `GET` | `/api/monitors` | Lista monitores e estatísticas 24h |

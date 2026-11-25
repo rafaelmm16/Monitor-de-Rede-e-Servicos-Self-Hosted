@@ -29,6 +29,8 @@ type Monitor struct {
 	IntervalSeconds   int           `json:"interval_seconds"`
 	TimeoutSeconds    int           `json:"timeout_seconds"`
 	ExpectedStatus    int           `json:"expected_status"`
+	HTTPMethod        string        `json:"http_method,omitempty"`
+	HTTPHeaders       string        `json:"http_headers,omitempty"`
 	Keyword           string        `json:"keyword,omitempty"`
 	SSLExpiryWarnDays int           `json:"ssl_expiry_warn_days"`
 	MaxRetries        int           `json:"max_retries"`
@@ -41,7 +43,10 @@ type Monitor struct {
 	SSLExpiresAt      *time.Time    `json:"ssl_expires_at,omitempty"`
 	SSLDaysRemaining  *int          `json:"ssl_days_remaining,omitempty"`
 	Uptime24h         float64       `json:"uptime_24h"`
+	Uptime7d          float64       `json:"uptime_7d"`
+	Uptime30d         float64       `json:"uptime_30d"`
 	AvgLatency24h     float64       `json:"avg_latency_24h"`
+	P95Latency24h     int64         `json:"p95_latency_24h"`
 	RecentChecks      []CheckResult `json:"recent_checks,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`
@@ -74,6 +79,7 @@ type WebhookType string
 const (
 	WebhookDiscord  WebhookType = "discord"
 	WebhookTelegram WebhookType = "telegram"
+	WebhookSlack    WebhookType = "slack"
 	WebhookGeneric  WebhookType = "generic"
 )
 

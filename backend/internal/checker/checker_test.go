@@ -58,6 +58,30 @@ func TestCheckHTTP(t *testing.T) {
 	}
 }
 
+func TestCheckHTTPMethodAndHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("X-Custom-Auth") != "token-123" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	res := checker.Run(context.Background(), models.Monitor{
+		ID:             "m-headers",
+		Type:           models.MonitorHTTP,
+		Target:         srv.URL,
+		HTTPMethod:     "POST",
+		HTTPHeaders:    `{"X-Custom-Auth":"token-123"}`,
+		ExpectedStatus: 200,
+		TimeoutSeconds: 5,
+	})
+	if res.Status != models.StatusUp {
+		t.Fatalf("expected StatusUp with custom method/headers, got %s (err: %s)", res.Status, res.Error)
+	}
+}
+
 func TestCheckTCP(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

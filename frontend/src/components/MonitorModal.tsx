@@ -24,6 +24,8 @@ export function MonitorModal({
   const [intervalSeconds, setIntervalSeconds] = useState(30);
   const [timeoutSeconds, setTimeoutSeconds] = useState(5);
   const [expectedStatus, setExpectedStatus] = useState(200);
+  const [httpMethod, setHttpMethod] = useState("GET");
+  const [httpHeaders, setHttpHeaders] = useState("");
   const [keyword, setKeyword] = useState("");
   const [sslWarnDays, setSslWarnDays] = useState(14);
   const [maxRetries, setMaxRetries] = useState(1);
@@ -41,6 +43,8 @@ export function MonitorModal({
       setIntervalSeconds(initial.interval_seconds || 30);
       setTimeoutSeconds(initial.timeout_seconds || 5);
       setExpectedStatus(initial.expected_status ?? 200);
+      setHttpMethod(initial.http_method || "GET");
+      setHttpHeaders(initial.http_headers || "");
       setKeyword(initial.keyword || "");
       setSslWarnDays(initial.ssl_expiry_warn_days || 14);
       setMaxRetries(initial.max_retries || 1);
@@ -54,6 +58,8 @@ export function MonitorModal({
       setIntervalSeconds(30);
       setTimeoutSeconds(5);
       setExpectedStatus(200);
+      setHttpMethod("GET");
+      setHttpHeaders("");
       setKeyword("");
       setSslWarnDays(14);
       setMaxRetries(1);
@@ -79,6 +85,8 @@ export function MonitorModal({
           interval_seconds: Number(intervalSeconds) || 30,
           timeout_seconds: Number(timeoutSeconds) || 5,
           expected_status: Number(expectedStatus) || 0,
+          http_method: httpMethod,
+          http_headers: httpHeaders.trim(),
           keyword: keyword.trim(),
           ssl_expiry_warn_days: Number(sslWarnDays) || 14,
           max_retries: Number(maxRetries) || 1,
@@ -234,31 +242,61 @@ export function MonitorModal({
           </div>
 
           {type === "http" && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-400">
-                  Expected Status (0 = 2xx/3xx)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={599}
-                  value={expectedStatus}
-                  onChange={(e) => setExpectedStatus(Number(e.target.value))}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
-                />
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">
+                    HTTP Method
+                  </label>
+                  <select
+                    value={httpMethod}
+                    onChange={(e) => setHttpMethod(e.target.value)}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+                  >
+                    <option value="GET">GET</option>
+                    <option value="HEAD">HEAD</option>
+                    <option value="POST">POST</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">
+                    Expected Status (0 = 2xx/3xx)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={599}
+                    value={expectedStatus}
+                    onChange={(e) => setExpectedStatus(Number(e.target.value))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-400">
+                    Body Keyword
+                  </label>
+                  <input
+                    type="text"
+                    value={keyword}
+                    onChange={(e) => setKeyword(e.target.value)}
+                    placeholder="ok"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">
-                  Body Keyword (optional)
+                  Custom Headers (JSON, optional)
                 </label>
                 <input
                   type="text"
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  placeholder="ok"
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+                  value={httpHeaders}
+                  onChange={(e) => setHttpHeaders(e.target.value)}
+                  placeholder='{"Authorization":"Bearer token"}'
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
             </div>

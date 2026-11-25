@@ -702,7 +702,7 @@ export default function DashboardPage() {
                 </div>
 
                 {/* Metric Strip */}
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                     <div className="text-[11px] text-slate-400">
                       Current Latency
@@ -713,10 +713,14 @@ export default function DashboardPage() {
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
                     <div className="text-[11px] text-slate-400">
-                      Avg Latency (24h)
+                      Avg / P95 (24h)
                     </div>
                     <div className="mt-1 text-lg font-bold text-slate-100">
-                      {Math.round(selectedMonitor.avg_latency_24h || 0)} ms
+                      {Math.round(selectedMonitor.avg_latency_24h || 0)}
+                      <span className="text-xs font-normal text-slate-400">
+                        {" / "}
+                        {selectedMonitor.p95_latency_24h || 0} ms
+                      </span>
                     </div>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
@@ -725,6 +729,16 @@ export default function DashboardPage() {
                     </div>
                     <div className="mt-1 text-lg font-bold text-emerald-400">
                       {selectedMonitor.uptime_24h.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[11px] text-slate-400">
+                      SLA (7d / 30d)
+                    </div>
+                    <div className="mt-1 text-sm font-bold text-emerald-300">
+                      {(selectedMonitor.uptime_7d ?? 100).toFixed(1)}%{" "}
+                      <span className="text-slate-500">/</span>{" "}
+                      {(selectedMonitor.uptime_30d ?? 100).toFixed(1)}%
                     </div>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
@@ -738,6 +752,26 @@ export default function DashboardPage() {
                         : "N/A"}
                     </div>
                   </div>
+                </div>
+
+                {/* SVG Badge Snippet */}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800/80 bg-slate-950/40 px-3.5 py-2 text-xs">
+                  <span className="text-slate-400">
+                    Embeddable Status Badge:{" "}
+                    <code className="ml-1 rounded bg-slate-900 px-1.5 py-0.5 text-emerald-300">
+                      /api/badge/{selectedMonitor.id}
+                    </code>
+                  </span>
+                  <button
+                    onClick={() => {
+                      const url = `${window.location.origin}/api/badge/${selectedMonitor.id}`;
+                      navigator.clipboard?.writeText(`![${selectedMonitor.name}](${url})`);
+                      pushToast("Badge Copied", "Markdown badge URL copied to clipboard.", "ok");
+                    }}
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
+                  >
+                    Copy Markdown
+                  </button>
                 </div>
 
                 {/* Real-time Latency Chart */}

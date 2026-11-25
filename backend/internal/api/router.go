@@ -35,6 +35,7 @@ func NewServer(store *storage.Store, sched *scheduler.Scheduler, hub *ws.Hub) ht
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/auth/status", s.handleAuthStatus)
 	mux.HandleFunc("GET /api/status", s.handlePublicStatus)
+	mux.HandleFunc("GET /api/badge/{id}", s.handleBadgeSVG)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/ws", s.hub.HandleWS)
 
@@ -86,6 +87,7 @@ func withOptionalAuth(next http.Handler) http.Handler {
 			(r.URL.Path == "/api/health" ||
 				r.URL.Path == "/api/auth/status" ||
 				r.URL.Path == "/api/status" ||
+				strings.HasPrefix(r.URL.Path, "/api/badge/") ||
 				r.URL.Path == "/metrics" ||
 				r.URL.Path == "/api/ws") {
 			next.ServeHTTP(w, r)
@@ -183,6 +185,61 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, _ = w.Write([]byte(b.String()))
+}
+
+func (s *Server) handleBadgeSVG(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	m, err := s.store.GetMonitor(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	label := xmlEscape(m.Name)
+	statusText := fmt.Sprintf("%s | %.1f%%", strings.ToUpper(string(m.Status)), m.Uptime24h)
+	color := "#64748b"
+	switch m.Status {
+	case models.StatusUp:
+		color = "#10b981"
+	case models.StatusDegraded:
+		color = "#f59e0b"
+	case models.StatusDown:
+		color = "#ef4444"
+	}
+
+	leftW := len(m.Name)*7 + 16
+	if leftW < 64 {
+		leftW = 64
+	}
+	rightW := len(statusText)*7 + 16
+	totalW := leftW + rightW
+
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="20" role="img" aria-label="%s: %s">
+  <linearGradient id="s" x2="0" y2="100%%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <clipPath id="r"><rect width="%d" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)">
+    <rect width="%d" height="20" fill="#1e293b"/>
+    <rect x="%d" width="%d" height="20" fill="%s"/>
+    <rect width="%d" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="11">
+    <text x="%d" y="14">%s</text>
+    <text x="%d" y="14" font-weight="bold">%s</text>
+  </g>
+</svg>`, totalW, label, statusText, totalW, leftW, leftW, rightW, color, totalW, leftW/2, label, leftW+rightW/2, statusText)
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "no-cache, max-age=0")
+	_, _ = w.Write([]byte(svg))
+}
+
+func xmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
 }
 
 type configBackup struct {
@@ -421,8 +478,8 @@ func (s *Server) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if wh.Type != models.WebhookDiscord && wh.Type != models.WebhookTelegram && wh.Type != models.WebhookGeneric {
-		writeError(w, http.StatusBadRequest, "type must be discord, telegram, or generic")
+	if wh.Type != models.WebhookDiscord && wh.Type != models.WebhookTelegram && wh.Type != models.WebhookSlack && wh.Type != models.WebhookGeneric {
+		writeError(w, http.StatusBadRequest, "type must be discord, telegram, slack, or generic")
 		return
 	}
 	if err := s.store.CreateWebhook(&wh); err != nil {

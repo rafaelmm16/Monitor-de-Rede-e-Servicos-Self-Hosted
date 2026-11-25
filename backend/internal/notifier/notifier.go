@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rafael/monitor-de-rede-backend/internal/models"
@@ -27,6 +28,8 @@ func Send(ctx context.Context, wh models.Webhook, alert AlertPayload) error {
 		return sendDiscord(ctx, client, wh.URL, alert)
 	case models.WebhookTelegram:
 		return sendTelegram(ctx, client, wh.BotToken, wh.ChatID, alert)
+	case models.WebhookSlack:
+		return sendSlack(ctx, client, wh.URL, alert)
 	case models.WebhookGeneric:
 		return sendGeneric(ctx, client, wh.URL, alert)
 	default:
@@ -105,6 +108,40 @@ func sendTelegram(ctx context.Context, client *http.Client, botToken, chatID str
 	}
 
 	return postJSON(ctx, client, endpoint, payload)
+}
+
+func sendSlack(ctx context.Context, client *http.Client, webhookURL string, alert AlertPayload) error {
+	if webhookURL == "" {
+		return fmt.Errorf("slack webhook URL is empty")
+	}
+
+	color := "#22c55e"
+	emoji := ":white_check_mark:"
+	if alert.NewStatus == models.StatusDown {
+		color = "#ef4444"
+		emoji = ":red_circle:"
+	} else if alert.NewStatus == models.StatusDegraded {
+		color = "#f59e0b"
+		emoji = ":warning:"
+	}
+
+	payload := map[string]any{
+		"attachments": []map[string]any{
+			{
+				"color": color,
+				"title": fmt.Sprintf("%s [%s] is %s", emoji, alert.Monitor.Name, strings.ToUpper(string(alert.NewStatus))),
+				"text":  alert.Message,
+				"fields": []map[string]any{
+					{"title": "Type", "value": string(alert.Monitor.Type), "short": true},
+					{"title": "Target", "value": alert.Monitor.Target, "short": true},
+					{"title": "Latency", "value": fmt.Sprintf("%d ms", alert.Monitor.LastLatencyMs), "short": true},
+				},
+				"ts": alert.Timestamp.Unix(),
+			},
+		},
+	}
+
+	return postJSON(ctx, client, webhookURL, payload)
 }
 
 func sendGeneric(ctx context.Context, client *http.Client, targetURL string, alert AlertPayload) error {

@@ -1,6 +1,6 @@
 export type MonitorType = "http" | "icmp" | "tcp" | "ssl";
 export type MonitorStatus = "unknown" | "up" | "down" | "degraded";
-export type WebhookType = "discord" | "telegram" | "generic";
+export type WebhookType = "discord" | "telegram" | "slack" | "generic";
 
 export interface CheckResult {
   id: number;
@@ -23,6 +23,8 @@ export interface Monitor {
   interval_seconds: number;
   timeout_seconds: number;
   expected_status: number;
+  http_method?: string;
+  http_headers?: string;
   keyword?: string;
   ssl_expiry_warn_days: number;
   max_retries: number;
@@ -35,7 +37,10 @@ export interface Monitor {
   ssl_expires_at?: string;
   ssl_days_remaining?: number;
   uptime_24h: number;
+  uptime_7d?: number;
+  uptime_30d?: number;
   avg_latency_24h: number;
+  p95_latency_24h?: number;
   recent_checks?: CheckResult[];
   created_at: string;
   updated_at: string;

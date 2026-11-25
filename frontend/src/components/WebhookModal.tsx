@@ -182,6 +182,7 @@ export function WebhookModal({
                 className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
               >
                 <option value="discord">Discord Webhook</option>
+                <option value="slack">Slack Webhook</option>
                 <option value="telegram">Telegram Bot</option>
                 <option value="generic">Generic JSON Webhook</option>
               </select>
@@ -215,7 +216,9 @@ export function WebhookModal({
                 placeholder={
                   type === "discord"
                     ? "https://discord.com/api/webhooks/..."
-                    : "https://hooks.example.com/alert"
+                    : type === "slack"
+                      ? "https://hooks.slack.com/services/..."
+                      : "https://hooks.example.com/alert"
                 }
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
               />

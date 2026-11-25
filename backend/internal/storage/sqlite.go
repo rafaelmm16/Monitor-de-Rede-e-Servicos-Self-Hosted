@@ -3,6 +3,8 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +51,8 @@ func (s *Store) migrate() error {
 		interval_seconds INTEGER NOT NULL DEFAULT 30,
 		timeout_seconds INTEGER NOT NULL DEFAULT 5,
 		expected_status INTEGER NOT NULL DEFAULT 200,
+		http_method TEXT NOT NULL DEFAULT 'GET',
+		http_headers TEXT NOT NULL DEFAULT '',
 		keyword TEXT NOT NULL DEFAULT '',
 		ssl_expiry_warn_days INTEGER NOT NULL DEFAULT 14,
 		max_retries INTEGER NOT NULL DEFAULT 1,
@@ -108,6 +112,8 @@ func (s *Store) migrate() error {
 	// Idempotent column migrations for existing databases
 	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN http_method TEXT NOT NULL DEFAULT 'GET'`)
+	_, _ = s.db.Exec(`ALTER TABLE monitors ADD COLUMN http_headers TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -133,16 +139,21 @@ func (s *Store) CreateMonitor(m *models.Monitor) error {
 	if m.MaxRetries < 1 {
 		m.MaxRetries = 1
 	}
+	if m.HTTPMethod == "" {
+		m.HTTPMethod = "GET"
+	}
 
 	_, err := s.db.Exec(`
 		INSERT INTO monitors (
 			id, name, type, target, port, interval_seconds, timeout_seconds,
-			expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
-			enabled, status, last_latency_ms, last_error, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			expected_status, http_method, http_headers, keyword, ssl_expiry_warn_days,
+			max_retries, maintenance, enabled, status, last_latency_ms, last_error,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Name, m.Type, m.Target, m.Port, m.IntervalSeconds, m.TimeoutSeconds,
-		m.ExpectedStatus, m.Keyword, m.SSLExpiryWarnDays, m.MaxRetries, boolToInt(m.Maintenance),
-		boolToInt(m.Enabled), m.Status, m.LastLatencyMs, m.LastError, m.CreatedAt, m.UpdatedAt,
+		m.ExpectedStatus, m.HTTPMethod, m.HTTPHeaders, m.Keyword, m.SSLExpiryWarnDays,
+		m.MaxRetries, boolToInt(m.Maintenance), boolToInt(m.Enabled), m.Status,
+		m.LastLatencyMs, m.LastError, m.CreatedAt, m.UpdatedAt,
 	)
 	return err
 }
@@ -161,17 +172,20 @@ func (s *Store) UpdateMonitor(m *models.Monitor) error {
 	if m.MaxRetries < 1 {
 		m.MaxRetries = 1
 	}
+	if m.HTTPMethod == "" {
+		m.HTTPMethod = "GET"
+	}
 
 	res, err := s.db.Exec(`
 		UPDATE monitors SET
 			name = ?, type = ?, target = ?, port = ?, interval_seconds = ?,
-			timeout_seconds = ?, expected_status = ?, keyword = ?,
-			ssl_expiry_warn_days = ?, max_retries = ?, maintenance = ?,
+			timeout_seconds = ?, expected_status = ?, http_method = ?, http_headers = ?,
+			keyword = ?, ssl_expiry_warn_days = ?, max_retries = ?, maintenance = ?,
 			enabled = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Name, m.Type, m.Target, m.Port, m.IntervalSeconds,
-		m.TimeoutSeconds, m.ExpectedStatus, m.Keyword,
-		m.SSLExpiryWarnDays, m.MaxRetries, boolToInt(m.Maintenance),
+		m.TimeoutSeconds, m.ExpectedStatus, m.HTTPMethod, m.HTTPHeaders,
+		m.Keyword, m.SSLExpiryWarnDays, m.MaxRetries, boolToInt(m.Maintenance),
 		boolToInt(m.Enabled), m.UpdatedAt, m.ID,
 	)
 	if err != nil {
@@ -199,9 +213,9 @@ func (s *Store) DeleteMonitor(id string) error {
 func (s *Store) GetMonitor(id string) (*models.Monitor, error) {
 	row := s.db.QueryRow(`
 		SELECT id, name, type, target, port, interval_seconds, timeout_seconds,
-		       expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
-		       enabled, status, last_latency_ms, last_checked_at, last_error,
-		       ssl_expires_at, ssl_days_remaining, created_at, updated_at
+		       expected_status, http_method, http_headers, keyword, ssl_expiry_warn_days,
+		       max_retries, maintenance, enabled, status, last_latency_ms, last_checked_at,
+		       last_error, ssl_expires_at, ssl_days_remaining, created_at, updated_at
 		FROM monitors WHERE id = ?`, id)
 
 	m, err := scanMonitor(row)
@@ -215,9 +229,9 @@ func (s *Store) GetMonitor(id string) (*models.Monitor, error) {
 func (s *Store) ListMonitors() ([]models.Monitor, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, type, target, port, interval_seconds, timeout_seconds,
-		       expected_status, keyword, ssl_expiry_warn_days, max_retries, maintenance,
-		       enabled, status, last_latency_ms, last_checked_at, last_error,
-		       ssl_expires_at, ssl_days_remaining, created_at, updated_at
+		       expected_status, http_method, http_headers, keyword, ssl_expiry_warn_days,
+		       max_retries, maintenance, enabled, status, last_latency_ms, last_checked_at,
+		       last_error, ssl_expires_at, ssl_days_remaining, created_at, updated_at
 		FROM monitors ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -497,27 +511,11 @@ func (s *Store) DeleteWebhook(id string) error {
 }
 
 func (s *Store) enrichMonitorStats(m *models.Monitor) {
-	since := time.Now().UTC().Add(-24 * time.Hour)
-	var total, upCount int
-	var avgLat sql.NullFloat64
-
-	err := s.db.QueryRow(`
-		SELECT
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN status IN ('up', 'degraded') THEN 1 ELSE 0 END), 0),
-			AVG(CASE WHEN latency_ms > 0 THEN latency_ms ELSE NULL END)
-		FROM check_results
-		WHERE monitor_id = ? AND checked_at >= ?`,
-		m.ID, since,
-	).Scan(&total, &upCount, &avgLat)
-	if err == nil && total > 0 {
-		m.Uptime24h = float64(upCount) * 100.0 / float64(total)
-		if avgLat.Valid {
-			m.AvgLatency24h = avgLat.Float64
-		}
-	} else {
-		m.Uptime24h = 100.0
-	}
+	now := time.Now().UTC()
+	m.Uptime24h, m.AvgLatency24h = s.calcWindowStats(m.ID, now.Add(-24*time.Hour))
+	m.Uptime7d, _ = s.calcWindowStats(m.ID, now.Add(-7*24*time.Hour))
+	m.Uptime30d, _ = s.calcWindowStats(m.ID, now.Add(-30*24*time.Hour))
+	m.P95Latency24h = s.calcP95Latency(m.ID, now.Add(-24*time.Hour))
 
 	recent, err := s.ListChecks(m.ID, 30)
 	if err == nil {
@@ -527,6 +525,60 @@ func (s *Store) enrichMonitorStats(m *models.Monitor) {
 		}
 		m.RecentChecks = recent
 	}
+}
+
+func (s *Store) calcWindowStats(monitorID string, since time.Time) (float64, float64) {
+	var total, upCount int
+	var avgLat sql.NullFloat64
+	err := s.db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN status IN ('up', 'degraded') THEN 1 ELSE 0 END), 0),
+			AVG(CASE WHEN latency_ms > 0 THEN latency_ms ELSE NULL END)
+		FROM check_results
+		WHERE monitor_id = ? AND checked_at >= ?`,
+		monitorID, since,
+	).Scan(&total, &upCount, &avgLat)
+	if err == nil && total > 0 {
+		avg := 0.0
+		if avgLat.Valid {
+			avg = avgLat.Float64
+		}
+		return float64(upCount) * 100.0 / float64(total), avg
+	}
+	return 100.0, 0
+}
+
+func (s *Store) calcP95Latency(monitorID string, since time.Time) int64 {
+	rows, err := s.db.Query(`
+		SELECT latency_ms FROM check_results
+		WHERE monitor_id = ? AND checked_at >= ? AND latency_ms > 0`,
+		monitorID, since,
+	)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+
+	var vals []int64
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err == nil {
+			vals = append(vals, v)
+		}
+	}
+	if len(vals) == 0 {
+		return 0
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	idx := int(math.Ceil(0.95*float64(len(vals)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(vals) {
+		idx = len(vals) - 1
+	}
+	return vals[idx]
 }
 
 type scanner interface {
@@ -542,9 +594,9 @@ func scanMonitor(row scanner) (*models.Monitor, error) {
 	err := row.Scan(
 		&m.ID, &m.Name, &m.Type, &m.Target, &m.Port,
 		&m.IntervalSeconds, &m.TimeoutSeconds, &m.ExpectedStatus,
-		&m.Keyword, &m.SSLExpiryWarnDays, &m.MaxRetries, &maintenance,
-		&enabled, &m.Status, &m.LastLatencyMs, &lastChecked, &m.LastError,
-		&sslExpires, &sslDays, &m.CreatedAt, &m.UpdatedAt,
+		&m.HTTPMethod, &m.HTTPHeaders, &m.Keyword, &m.SSLExpiryWarnDays,
+		&m.MaxRetries, &maintenance, &enabled, &m.Status, &m.LastLatencyMs,
+		&lastChecked, &m.LastError, &sslExpires, &sslDays, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
