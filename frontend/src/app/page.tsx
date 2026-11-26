@@ -26,7 +26,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { api, getWebSocketURL } from "@/lib/api";
+import { api, getWebSocketURL, IS_DEMO_MODE } from "@/lib/api";
 import {
   CheckResult,
   Incident,
@@ -167,8 +167,25 @@ export default function DashboardPage() {
       .catch(() => {});
   }, [selectedId]);
 
-  // Real-time WebSocket subscription
+  // Real-time WebSocket subscription (or simulated ticks in GitHub Pages Demo Mode)
   useEffect(() => {
+    if (IS_DEMO_MODE) {
+      setWsConnected(true);
+      const timer = setInterval(async () => {
+        const currId = selectedIdRef.current;
+        if (currId) {
+          await api.triggerCheck(currId);
+          const [freshMonitors, freshChecks] = await Promise.all([
+            api.listMonitors(),
+            api.listChecks(currId, 60),
+          ]);
+          setMonitors(freshMonitors);
+          setChecks(freshChecks);
+        }
+      }, 6000);
+      return () => clearInterval(timer);
+    }
+
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 
@@ -355,7 +372,11 @@ export default function DashboardPage() {
                 <WifiOff className="h-3.5 w-3.5" />
               )}
               <span className="hidden sm:inline">
-                {wsConnected ? "Live WS" : "Reconnecting"}
+                {IS_DEMO_MODE
+                  ? "Demo Mode"
+                  : wsConnected
+                    ? "Live WS"
+                    : "Reconnecting"}
               </span>
             </span>
 
@@ -830,7 +851,7 @@ export default function DashboardPage() {
                               <td className="px-3 py-2 text-slate-300">
                                 {c.latency_ms} ms
                               </td>
-                              <td className="max-w-[200px] truncate px-3 py-2 text-slate-400">
+                              <td className="max-w-50 truncate px-3 py-2 text-slate-400">
                                 {c.error ||
                                   (c.status_code
                                     ? `HTTP ${c.status_code}`

@@ -17,6 +17,13 @@ Um monitor de infraestrutura e serviços self-hosted (estilo Uptime Kuma simplif
   - Barra de heartbeat dos últimos 30 checks, gráfico SVG interativo de latência e histórico de incidentes.
   - Modais para gerenciamento de monitores e configuração/teste de webhooks.
 
+## Live Demo (GitHub Pages)
+
+O repositório inclui deploy automático do dashboard (em **Demo Mode** estático) via GitHub Actions:
+
+- **URL**: `https://rafaelmm16.github.io/Monitor-de-Rede-e-Servicos-Self-Hosted/`
+- **Ativação no GitHub**: em `Settings → Pages → Build and deployment → Source`, selecione **GitHub Actions**. A cada push na branch `main`, o workflow `.github/workflows/pages.yml` compila o Next.js (`GITHUB_PAGES=true`) e publica em `frontend/out`.
+
 ## Subindo com Docker Compose
 
 ```bash
